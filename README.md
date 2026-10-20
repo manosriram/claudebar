@@ -1,5 +1,8 @@
 # ClaudeBar
 
+<img width="640" height="536" alt="Screenshot 2026-10-20 at 11 56 25 PM" src="https://github.com/user-attachments/assets/1b4dc432-226c-46ba-b764-5ca001b565b6" />
+
+
 A tiny macOS menu-bar app that shows your Claude usage limits: the **5-hour** and **weekly** windows, the same numbers Claude Code's `/usage` command shows.
 
 The menu bar shows two small gauges with percentages. Click it to see larger dials with reset times, a last-updated time, and Refresh / Quit items. Gauges turn green below 50%, orange below 80%, and red at 80% and above.
