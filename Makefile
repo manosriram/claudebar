@@ -4,7 +4,7 @@ APP := ClaudeBar.app
 
 build: $(APP)/Contents/MacOS/ClaudeBar
 
-$(APP)/Contents/MacOS/ClaudeBar: ClaudeBar.swift build.sh VERSION Assets/claude.svg Assets/openai.svg
+$(APP)/Contents/MacOS/ClaudeBar: ClaudeBar.swift build.sh VERSION Assets/claude.svg Assets/openai.svg Assets/AppIcon.icns
 	./build.sh
 
 run: build

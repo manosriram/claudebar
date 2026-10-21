@@ -24,6 +24,7 @@ for arch in arm64 x86_64 universal; do
     plutil -lint "$app/Contents/Info.plist"
     test -s "$app/Contents/Resources/claude.svg"
     test -s "$app/Contents/Resources/openai.svg"
+    test -s "$app/Contents/Resources/AppIcon.icns"
     codesign --force --sign - "$app"
     codesign --verify --deep --strict "$app"
     archive="$release_dir/ClaudeBar-$version-macos-$arch.zip"

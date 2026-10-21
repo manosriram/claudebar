@@ -1,3 +1,8 @@
+### What's new in 1.2.0
+
+- Fixed persistent "Token expired" when a stale `~/.claude/.credentials.json` shadowed the fresh Keychain login.
+- Added an app icon.
+
 ClaudeBar now supports both Claude and Codex usage in the macOS menu bar.
 
 - Switch between Claude and Codex; your choice is remembered.
