@@ -4,22 +4,26 @@ import Cocoa
 let usageURL = URL(string: "https://api.anthropic.com/api/oauth/usage")!
 
 func accessToken() -> String? {
-    // Linux-style file first, then the macOS Keychain item Claude Code writes.
-    var data = try? Data(contentsOf: FileManager.default.homeDirectoryForCurrentUser
+    // Both the Linux-style file and the macOS Keychain item can exist; a stale one must not
+    // shadow the other, so take whichever token expires last.
+    let file = try? Data(contentsOf: FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".claude/.credentials.json"))
-    if data == nil {
-        let p = Process(), pipe = Pipe()
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/security")
-        p.arguments = ["find-generic-password", "-s", "Claude Code-credentials", "-w"]
-        p.standardOutput = pipe
-        guard (try? p.run()) != nil else { return nil }
-        data = pipe.fileHandleForReading.readDataToEndOfFile()
+    let p = Process(), pipe = Pipe()
+    p.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+    p.arguments = ["find-generic-password", "-s", "Claude Code-credentials", "-w"]
+    p.standardOutput = pipe
+    p.standardError = FileHandle.nullDevice
+    var keychain: Data?
+    if (try? p.run()) != nil {
+        keychain = pipe.fileHandleForReading.readDataToEndOfFile()
         p.waitUntilExit()
     }
-    guard let d = data,
-          let json = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
-          let oauth = json["claudeAiOauth"] as? [String: Any] else { return nil }
-    return oauth["accessToken"] as? String
+    let creds = [file, keychain].compactMap { d -> [String: Any]? in
+        guard let d, let json = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return nil }
+        return json["claudeAiOauth"] as? [String: Any]
+    }
+    let best = creds.max { ($0["expiresAt"] as? Double ?? 0) < ($1["expiresAt"] as? Double ?? 0) }
+    return best?["accessToken"] as? String
 }
 
 enum Provider: String, CaseIterable {
