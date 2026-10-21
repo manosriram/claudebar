@@ -2,7 +2,8 @@
 # Builds ClaudeBar.app (menu-bar only, no Dock icon). Needs Xcode command line tools.
 set -e
 cd "$(dirname "$0")"
-mkdir -p ClaudeBar.app/Contents/MacOS
+mkdir -p ClaudeBar.app/Contents/MacOS ClaudeBar.app/Contents/Resources
+cp Assets/claude.svg Assets/openai.svg ClaudeBar.app/Contents/Resources/
 swiftc -O ClaudeBar.swift -o ClaudeBar.app/Contents/MacOS/ClaudeBar
 cat > ClaudeBar.app/Contents/Info.plist <<EOF
 <?xml version="1.0" encoding="UTF-8"?>

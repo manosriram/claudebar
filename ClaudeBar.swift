@@ -22,6 +22,98 @@ func accessToken() -> String? {
     return oauth["accessToken"] as? String
 }
 
+enum Provider: String, CaseIterable {
+    case claude = "Claude", codex = "Codex"
+
+    var icon: NSImage? {
+        let name = self == .claude ? "claude" : "openai"
+        guard let url = Bundle.main.url(forResource: name, withExtension: "svg"),
+              let image = NSImage(contentsOf: url) else { return nil }
+        image.size = NSSize(width: 18, height: 18)
+        image.accessibilityDescription = rawValue
+        image.isTemplate = true
+        return image
+    }
+}
+
+func codexExecutable() -> String? {
+    let paths = (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").map(String.init)
+        + ["/opt/homebrew/bin", "/usr/local/bin", "/Applications/Codex.app/Contents/Resources"]
+    return paths.map { $0 + "/codex" }.first { FileManager.default.isExecutableFile(atPath: $0) }
+}
+
+struct UsageWindow {
+    let title: String
+    let percent: Int
+    let reset: Date?
+}
+
+struct UsageError: LocalizedError {
+    let message: String
+    var errorDescription: String? { message }
+}
+
+// Read-only JSON-RPC session; Codex handles its own credentials and token refresh.
+func codexUsage() throws -> [UsageWindow] {
+    guard let executable = codexExecutable() else {
+        throw UsageError(message: "Install Codex CLI, then choose Connect Codex")
+    }
+    let process = Process(), input = Pipe(), output = Pipe()
+    process.executableURL = URL(fileURLWithPath: executable)
+    process.arguments = ["app-server"]
+    process.standardInput = input
+    process.standardOutput = output
+    process.standardError = FileHandle.nullDevice
+    try process.run()
+    let timeout = DispatchWorkItem { if process.isRunning { process.terminate() } }
+    DispatchQueue.global().asyncAfter(deadline: .now() + 30, execute: timeout)
+    defer {
+        timeout.cancel()
+        try? input.fileHandleForWriting.close()
+        if process.isRunning { process.terminate() }
+        try? output.fileHandleForReading.close()
+    }
+    func send(_ value: [String: Any]) throws {
+        var data = try JSONSerialization.data(withJSONObject: value)
+        data.append(10)
+        try input.fileHandleForWriting.write(contentsOf: data)
+    }
+    func response(_ id: Int) throws -> [String: Any] {
+        var line = Data()
+        while let byte = try output.fileHandleForReading.read(upToCount: 1), !byte.isEmpty {
+            if byte[0] != 10 { line.append(byte); continue }
+            defer { line.removeAll(keepingCapacity: true) }
+            guard let json = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+                  json["id"] as? Int == id else { continue }
+            if let error = json["error"] as? [String: Any] {
+                throw UsageError(message: error["message"] as? String ?? "Connect Codex with a ChatGPT account")
+            }
+            if let result = json["result"] as? [String: Any] { return result }
+            throw UsageError(message: "Invalid Codex response")
+        }
+        throw UsageError(message: "Codex unavailable or timed out — try Refresh")
+    }
+    try send(["id": 0, "method": "initialize", "params": ["clientInfo": ["name": "claude_bar", "version": "1.1.0"]]])
+    _ = try response(0)
+    try send(["method": "initialized", "params": [:]])
+    try send(["id": 1, "method": "account/rateLimits/read"])
+    let result = try response(1)
+    let buckets = result["rateLimitsByLimitId"] as? [String: Any]
+    guard let limits = (buckets?["codex"] ?? result["rateLimits"]) as? [String: Any] else {
+        throw UsageError(message: "No Codex usage available for this account")
+    }
+    let windows = ["primary", "secondary"].compactMap { key -> UsageWindow? in
+        guard let window = limits[key] as? [String: Any],
+              let percent = window["usedPercent"] as? Double else { return nil }
+        let minutes = window["windowDurationMins"] as? Int ?? 0
+        let title = minutes == 10080 ? "Weekly" : minutes == 300 ? "5-hour" : minutes > 0 ? "\(minutes)-minute" : key.capitalized
+        let reset = (window["resetsAt"] as? Double).map { Date(timeIntervalSince1970: $0) }
+        return UsageWindow(title: title, percent: min(100, max(0, Int(percent))), reset: reset)
+    }
+    guard !windows.isEmpty else { throw UsageError(message: "No Codex usage windows available") }
+    return windows
+}
+
 func parseDate(_ s: String?) -> Date? {
     guard let s else { return nil }
     let f = ISO8601DateFormatter()
@@ -124,9 +216,13 @@ final class Controller: NSObject {
     let weekly = GaugeView(frame: NSRect(x: 160, y: 0, width: 150, height: 160))
     let updated = NSMenuItem(title: "", action: nil, keyEquivalent: "")
 
+    var provider = Provider(rawValue: UserDefaults.standard.string(forKey: "provider") ?? "") ?? .claude
+    var providerItems: [Provider: NSMenuItem] = [:]
+    var requestID = UUID()
+
     override init() {
         super.init()
-        item.button?.title = "Claude …"
+        item.button?.title = "…"
         item.button?.toolTip = "5-hour · Weekly usage"
         fiveHour.title = "5-hour"
         weekly.title = "Weekly"
@@ -136,7 +232,21 @@ final class Controller: NSObject {
         let gaugeItem = NSMenuItem()
         gaugeItem.view = gauges
         let menu = NSMenu()
+        for provider in Provider.allCases {
+            let choice = NSMenuItem(title: provider.rawValue, action: #selector(selectProvider(_:)), keyEquivalent: "")
+            choice.target = self
+            choice.representedObject = provider.rawValue
+            providerItems[provider] = choice
+            menu.addItem(choice)
+        }
+        menu.addItem(.separator())
         [gaugeItem, .separator(), updated, .separator()].forEach(menu.addItem)
+        for provider in Provider.allCases {
+            let connect = NSMenuItem(title: "Connect \(provider.rawValue)…", action: #selector(connectProvider(_:)), keyEquivalent: "")
+            connect.target = self
+            connect.representedObject = provider.rawValue
+            menu.addItem(connect)
+        }
         let refreshItem = NSMenuItem(title: "Refresh", action: #selector(refresh), keyEquivalent: "r")
         refreshItem.target = self
         menu.addItem(refreshItem)
@@ -146,20 +256,74 @@ final class Controller: NSObject {
         Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in self?.refresh() }
     }
 
+    @objc func selectProvider(_ sender: NSMenuItem) {
+        guard let name = sender.representedObject as? String, let selected = Provider(rawValue: name) else { return }
+        provider = selected
+        UserDefaults.standard.set(selected.rawValue, forKey: "provider")
+        refresh()
+    }
+
+    @objc func connectProvider(_ sender: NSMenuItem) {
+        selectProvider(sender)
+        let command = provider == .codex ? "codex login" : "claude auth login"
+        let alert = NSAlert()
+        alert.messageText = "Connect \(provider.rawValue)"
+        alert.informativeText = "Run ‘\(command)’ in Terminal to sign in, then choose Refresh. Existing CLI logins are connected automatically. Codex usage requires a ChatGPT account."
+        alert.addButton(withTitle: "Copy login command")
+        alert.addButton(withTitle: "Close")
+        if alert.runModal() == .alertFirstButtonReturn {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(command, forType: .string)
+        }
+    }
+
     @objc func refresh() {
-        guard let token = accessToken() else { return show(error: "No Claude Code login found") }
-        var req = URLRequest(url: usageURL)
-        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        req.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
-        URLSession.shared.dataTask(with: req) { data, resp, _ in
-            DispatchQueue.main.async {
-                let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
-                guard status == 200, let data,
-                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-                else { return self.show(error: status == 401 ? "Token expired – run claude once" : "HTTP \(status)") }
-                self.show(json)
+        let id = UUID()
+        requestID = id
+        let selected = provider
+        providerItems.forEach { $0.value.state = $0.key == selected ? .on : .off }
+        item.button?.image = selected.icon
+        item.button?.imagePosition = .imageLeading
+        item.button?.setAccessibilityLabel(selected.rawValue + " usage")
+        item.button?.attributedTitle = NSAttributedString(string: " …")
+        item.button?.toolTip = "\(selected.rawValue) usage"
+        updated.title = "Connecting to \(selected.rawValue)…"
+        fiveHour.isHidden = true
+        weekly.isHidden = true
+        DispatchQueue.global(qos: .utility).async {
+            if selected == .codex {
+                let result = Result { try codexUsage() }
+                DispatchQueue.main.async {
+                    guard self.requestID == id else { return }
+                    switch result {
+                    case .success(let windows): self.show(windows)
+                    case .failure(let error): self.show(error: error.localizedDescription)
+                    }
+                }
+                return
             }
-        }.resume()
+            guard let token = accessToken() else {
+                DispatchQueue.main.async {
+                    if self.requestID == id { self.show(error: "No Claude Code login found — choose Connect Claude") }
+                }
+                return
+            }
+            var req = URLRequest(url: usageURL, timeoutInterval: 30)
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            req.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
+            URLSession.shared.dataTask(with: req) { data, resp, error in
+                DispatchQueue.main.async {
+                    guard self.requestID == id else { return }
+                    let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+                    guard status == 200, let data,
+                          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+                    else { return self.show(error: status == 401 ? "Token expired – run claude once" : error?.localizedDescription ?? "HTTP \(status)") }
+                    let (h, hr) = self.window(json, "five_hour")
+                    let (w, wr) = self.window(json, "seven_day")
+                    self.show([UsageWindow(title: "5-hour", percent: h, reset: hr), UsageWindow(title: "Weekly", percent: w, reset: wr)])
+                }
+            }.resume()
+        }
     }
 
     func window(_ json: [String: Any], _ key: String) -> (Int, Date?) {
@@ -167,26 +331,32 @@ final class Controller: NSObject {
         return (Int((w?["utilization"] as? Double) ?? 0), parseDate(w?["resets_at"] as? String))
     }
 
-    func show(_ json: [String: Any]) {
-        let (h, hReset) = window(json, "five_hour")
-        let (w, wReset) = window(json, "seven_day")
-        let title = NSMutableAttributedString()
-        for (pct, text) in [(h, " \(h)%  "), (w, " \(w)%")] {
+    func show(_ windows: [UsageWindow]) {
+        let title = NSMutableAttributedString(string: " ", attributes: [
+            .font: NSFont.menuBarFont(ofSize: 0), .foregroundColor: NSColor.labelColor])
+        for window in windows {
             let icon = NSTextAttachment()
-            icon.image = miniGauge(pct)
+            icon.image = miniGauge(window.percent)
             icon.bounds = NSRect(x: 0, y: -3, width: 16, height: 16)
             title.append(NSAttributedString(attachment: icon))
-            title.append(NSAttributedString(string: text, attributes: [
+            title.append(NSAttributedString(string: " \(window.percent)%  ", attributes: [
                 .font: NSFont.menuBarFont(ofSize: 0), .foregroundColor: NSColor.labelColor]))
         }
         item.button?.attributedTitle = title
-        (fiveHour.percent, fiveHour.subtitle) = (h, resetText(hReset))
-        (weekly.percent, weekly.subtitle) = (w, resetText(wReset))
+        for (index, gauge) in [fiveHour, weekly].enumerated() {
+            gauge.isHidden = index >= windows.count
+            guard index < windows.count else { continue }
+            let window = windows[index]
+            (gauge.title, gauge.percent, gauge.subtitle) = (window.title, window.percent, resetText(window.reset))
+        }
+        item.button?.toolTip = provider.rawValue + " · " + windows.map { "\($0.title): \($0.percent)% used" }.joined(separator: " · ")
         updated.title = "Updated \(DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .short))"
     }
 
     func show(error: String) {
-        item.button?.title = "Claude ⚠︎"
+        item.button?.attributedTitle = NSAttributedString(string: " ⚠︎")
+        fiveHour.isHidden = true
+        weekly.isHidden = true
         updated.title = error
     }
 }
