@@ -8,12 +8,18 @@ The menu bar shows usage gauges with percentages used. Claude shows 5-hour and w
 
 ## Requirements
 
-- macOS
-- Xcode command line tools (`xcode-select --install`)
+- macOS 13 Ventura or later
+- Xcode command line tools (`xcode-select --install`) when building from source
 - For Claude: [Claude Code](https://claude.com/claude-code), logged in with a Claude account
 - For Codex: Codex CLI installed and logged in with a ChatGPT account (`codex login`). API-key logins do not provide ChatGPT usage limits.
 
 Choose **Connect Claude…** or **Connect Codex…** to copy the login command. Run it in Terminal, then choose **Refresh**. Existing CLI logins are reused automatically. Both providers can remain signed in; selecting one changes the displayed usage.
+
+## Download
+
+Download a ZIP from the [latest release](https://github.com/manosriram/claudebar/releases/latest): **arm64** for Apple Silicon, **x86_64** for Intel, or **universal** for either. Extract it, move `ClaudeBar.app` into Applications, and open it. Linux is not currently supported.
+
+Release builds are ad-hoc signed and are not notarized by Apple. If macOS blocks the first launch, attempt to open the app, then choose **Open Anyway** under System Settings → Privacy & Security if you trust the download. Each release includes SHA-256 checksums.
 
 ## Build and run
 
@@ -21,11 +27,14 @@ Choose **Connect Claude…** or **Connect Codex…** to copy the login command. 
 make run        # build and launch
 make install    # copy ClaudeBar.app to /Applications
 make clean      # remove the built app
+make release    # build Intel, Apple Silicon, and universal ZIPs in dist/
 ```
 
 Or without make: `./build.sh && open ClaudeBar.app`.
 
 The app runs only in the menu bar and has no Dock icon. To quit, choose **Quit** (⌘Q) from its menu. To start it at login, add `ClaudeBar.app` under System Settings → General → Login Items.
+
+To publish a release, update `VERSION` and `RELEASE_NOTES.md`, commit the changes, then push a matching tag (for example, `v1.1.0`). The release workflow builds and verifies all three macOS archives and publishes them with checksums. Running the workflow manually builds downloadable workflow artifacts without publishing a release.
 
 ## How it works
 

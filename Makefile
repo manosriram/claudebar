@@ -1,10 +1,10 @@
 APP := ClaudeBar.app
 
-.PHONY: build run install clean
+.PHONY: build run install clean release
 
 build: $(APP)/Contents/MacOS/ClaudeBar
 
-$(APP)/Contents/MacOS/ClaudeBar: ClaudeBar.swift build.sh Assets/claude.svg Assets/openai.svg
+$(APP)/Contents/MacOS/ClaudeBar: ClaudeBar.swift build.sh VERSION Assets/claude.svg Assets/openai.svg
 	./build.sh
 
 run: build
@@ -16,3 +16,6 @@ install: build
 
 clean:
 	rm -rf $(APP)
+
+release:
+	./scripts/package-macos.sh
