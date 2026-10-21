@@ -1,6 +1,6 @@
 # ClaudeBar
 
-<img width="640" height="536" alt="Screenshot 2026-10-20 at 11 56 25 PM" src="https://github.com/user-attachments/assets/1b4dc432-226c-46ba-b764-5ca001b565b6" />
+<img width="340" alt="ClaudeBar menu showing the provider selector, OpenAI logo, and Codex 5-hour and weekly usage gauges" src="docs/images/claudebar.png" />
 
 A tiny macOS menu-bar app that shows **Claude or Codex** usage limits. Select a provider in the menu; its logo (Claude starburst or OpenAI Blossom for Codex) and usage gauges appear in the menu bar. Your selection is remembered across launches.
 
